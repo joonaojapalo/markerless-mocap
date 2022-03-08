@@ -1,0 +1,12 @@
+**/__pycache__
+notes/
+
+# inputs
+*.xlsx
+
+# outputs
+*.MP4
+*.array
+datasets/**/xml/*.XML
+output/*.MP4
+output/*.png
