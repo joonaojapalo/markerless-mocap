@@ -7,40 +7,7 @@ from blazepose import dualcam
 import numpy as np  # for data file
 
 from dlt_processor import DLTProcessor
-
-# import dataset
-#from datasets.pajulahti_3.calibration_coords import cameras, world_positions
-#from datasets.pajulahti_3 import video_metadata
-
-
-def load_dataset(dataset_name):
-    API_CALIBRATION = ["cameras", "world_positions"]
-    API_VIDEO = ["video_metadata"]
-    path_cal = "datasets.%s.calibration_coords" % (dataset_name,)
-    path_video = "datasets.%s" % (dataset_name,)
-
-    # import dataset modules
-    _module_calibration = __import__(path_cal,
-                                     globals(),
-                                     locals(),
-                                     API_CALIBRATION)
-    _module_video = __import__(path_video,
-                               globals(),
-                               locals(),
-                               API_VIDEO)
-
-    video_metadata = _module_video.video_metadata
-
-    # video basepath
-    videopath = os.path.join("datasets", dataset_name,
-                             video_metadata.path["base"])
-
-    return (
-        _module_calibration.cameras,
-        _module_calibration.world_positions,
-        video_metadata,
-        videopath
-    )
+import datasets
 
 
 def print_dlt_analysis_result(dlt_processor):
@@ -49,19 +16,6 @@ def print_dlt_analysis_result(dlt_processor):
 
     if analysis["s"] and analysis["v"]:
         print("Result\ns\tv\n%.3f\t%.2f" % (analysis["s"], analysis["v"]))
-
-
-# def log_dlt_analysis_result(file_id, dlt_processor, filename="analysis.tsv"):
-#    analysis = dlt_processor.get_analysis()
-#
-#    if not os.path.isfile(filename):
-#        with open(filename, "a") as fd:
-#            fd.write("id\tvelocity\tdistance\n")
-#
-#    with open(filename, "a") as fd:
-#        if analysis["s"] and analysis["v"]:
-#            fd.write("\"%s\"\t%.3f\t%.2f\n" %
-#                     (file_id, analysis["s"], analysis["v"]))
 
 def write_data_array(pos_data, file_id, output_dir=""):
     filename = file_id + ".array"
@@ -121,7 +75,7 @@ if __name__ == "__main__":
     options, args = parser.parse_args()
 
     # load dataset
-    cameras, world_positions, video_metadata, videopath = load_dataset(
+    cameras, world_positions, video_metadata, videopath = datasets.load_dataset(
         options.dataset)
 
     meta = MetaData(video_metadata)
@@ -157,7 +111,7 @@ if __name__ == "__main__":
             inputs, outfile, [dlt_processor], sync, skip, cut)
 
         # write run position data
-        write_data_array(dlt_processor.pos_data)
+        write_data_array(dlt_processor.pos_data, file_id)
 
         # log to file and console
         print_dlt_analysis_result(dlt_processor)

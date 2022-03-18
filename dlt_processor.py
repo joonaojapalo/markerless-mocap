@@ -1,3 +1,4 @@
+import itertools
 import numpy as np
 import cv2  # Video reading with opencv
 import mediapipe as mp  # Mediapipe for the Blazepose (and other stuff)
@@ -14,6 +15,19 @@ YELLOW = (0, 255, 255)
 GREEN = (0, 255, 0)
 GRAY_DARK = (32, 32, 32)
 
+landmark_names = [
+    'LEFT_SHOULDER',    # 1
+    'RIGHT_SHOULDER',   # 2
+    'LEFT_HIP',         # 3
+    'RIGHT_HIP',        # 4
+    'LEFT_KNEE',        # 5
+    'RIGHT_KNEE',       # 6
+    'LEFT_ANKLE',       # 7
+    'RIGHT_ANKLE',      # 8
+    'LEFT_FOOT_INDEX',  # 9
+    'RIGHT_FOOT_INDEX'  # 10
+]
+
 
 def distance(p1, p2):
     if p1 is None:
@@ -24,6 +38,8 @@ def distance(p1, p2):
 
     return np.sqrt(((p1[0]-p2[0])**2) + ((p1[1]-p2[1])**2) + ((p1[2]-p2[2])**2))
 
+def flatten(xxs):
+    return itertools.chain(*xxs)
 
 class DLTProcessor:
     def __init__(self, cameras, world_positions, n_dim=3, world_unit=1000.0):
@@ -46,7 +62,7 @@ class DLTProcessor:
         self.n_dim = n_dim
         self.cameras = cameras
         self.world_unit = world_unit
-        self.pos_data = []
+        self.pos_data = [] # [t, *hip_center{x,y,z}, *landmarks{x,y,z}]
 
         # dlt camera transform array
         self.L_arr = []
@@ -99,7 +115,8 @@ class DLTProcessor:
 
     def get_analysis(self):
         fps = self.prev_state["fps"]
-        s = self.prev_state["s_total"] / self.world_unit if self.prev_state["s_total"] else None
+        s = self.prev_state["s_total"] / \
+            self.world_unit if self.prev_state["s_total"] else None
         t = self.prev_state["t_total"]
         v = None if not t or not s else fps * s / t
 
@@ -124,7 +141,7 @@ class DLTProcessor:
         for (image, camera) in zip(images, self.cameras):
             self._draw_calibration_pos(camera, image)
 
-        world_pos = None
+        hip_world_pos = None
 
         if pose_results:
             screen_positions = []
@@ -132,52 +149,71 @@ class DLTProcessor:
                 hr = results.pose_landmarks.landmark[Landmark.RIGHT_HIP]
                 hl = results.pose_landmarks.landmark[Landmark.LEFT_HIP]
 
-                # hip center
+                # hip center to pixels (note: blazepose estimates in space {0...1}^3)
                 mx = w * (hr.x + hl.x) / 2
                 my = h * (hr.y + hl.y) / 2
                 screen_positions.append([mx, my])
 
-                # draw
+                # draw hip center
                 cv2.circle(image, (int(mx), int(my)), 5, BLUE, 3)
 
-            # solve world positions
-            world_pos = self.get_position(screen_positions)
+            # solve world position
+            hip_world_pos = self.get_position(screen_positions)
+            print("hip_world_pos", hip_world_pos)
+
+            landmark_world_pos = []
+            for landmark_name in landmark_names:
+                screen_positions = []
+                for (image, results, camera) in zip(images, pose_results, self.cameras):
+                    lm = results.pose_landmarks.landmark[Landmark[landmark_name]]
+
+                    # blazepose coords to screen pixels
+                    sx = w * lm.x
+                    sy = h * lm.y
+                    screen_positions.append([sx, sy])
+
+                # solve world position
+                world_pos = self.get_position(screen_positions)
+                landmark_world_pos.append(world_pos)
 
         v = None
         s = None
 
-        if self.prev_state["pos_hip"] is not None and world_pos is not None:
+        if self.prev_state["pos_hip"] is not None and hip_world_pos is not None:
             # distance since prev frame
-            s = distance(self.prev_state["pos_hip"], world_pos)
+            s = distance(self.prev_state["pos_hip"], hip_world_pos)
             v = (fps * s) / self.world_unit  # --> m/s
 
         t = self.prev_state["t"]
         t_start = self.prev_state["t_start"]
         pos_start = self.prev_state["pos_hip_start"]
 
-        if world_pos is not None:
-            self.pos_data.append([t, *world_pos])
+        if hip_world_pos is not None and landmark_world_pos is not None:
+            print("write lm data", landmark_world_pos)
+            self.pos_data.append([t, *hip_world_pos, *flatten(landmark_world_pos)])
 
-        s_total = distance(pos_start, world_pos)
-        print("pos_start", pos_start, "t_start", t_start, "t", t, "pos_cur", world_pos)
+        s_total = distance(pos_start, hip_world_pos)
+        print("pos_start", pos_start, "t_start",
+              t_start, "t", t, "pos_cur", hip_world_pos)
         if (s is not None and v is not None and s_total is not None):
-            print("     s=%.2f" % (s,), "v=%.2f" % (v,), "s_tot=%.2f"%(s_total,))
+            print("     s=%.2f" % (s,), "v=%.2f" %
+                  (v,), "s_tot=%.2f" % (s_total,))
         t_total = (t - t_start) if t_start is not None else None
 
         for image in images:
             self._display_metrics(image, t_total, s_total, v, t/fps)
 
         # update state
-        if self.prev_state["t_start"] is None and world_pos is not None:
+        if self.prev_state["t_start"] is None and hip_world_pos is not None:
             # first frame with detected position
             self.prev_state["t_start"] = t
 
         if self.prev_state["pos_hip_start"] is None:
-            self.prev_state["pos_hip_start"] = world_pos
+            self.prev_state["pos_hip_start"] = hip_world_pos
 
         if s_total:
             self.prev_state["s_total"] = s_total
 
-        self.prev_state["pos_hip"] = world_pos
+        self.prev_state["pos_hip"] = hip_world_pos
         self.prev_state["t"] = t + 1
         self.prev_state["t_total"] = t_total
